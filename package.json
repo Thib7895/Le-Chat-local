@@ -1,0 +1,37 @@
+{
+  "name": "le-chat-local",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@tauri-apps/api": "^2.0.1",
+    "@tauri-apps/plugin-http": "^2.5.6",
+    "autoprefixer": "^10.4.23",
+    "framer-motion": "^12.29.2",
+    "lucide-react": "^0.563.0",
+    "nanoid": "^5.1.6",
+    "next": "^16.1.6",
+    "postcss": "^8.5.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwindcss": "^4.1.18",
+    "zustand": "^5.0.10"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0-rc.18",
+    "@types/node": "^25.0.10",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}

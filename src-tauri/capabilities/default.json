@@ -1,0 +1,36 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "shell:allow-spawn",
+    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "C:\\Users\\lemar\\anaconda3\\python.exe",
+          "cmd": true,
+          "args": true
+        },
+        {
+          "name": "C:\\Users\\lemar\\anaconda3\\envs\\sst-env\\python.exe",
+          "cmd": true,
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "http://127.0.0.1:**" },
+        { "url": "http://localhost:**" }
+      ]
+    }
+  ]
+}

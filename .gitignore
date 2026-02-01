@@ -1,0 +1,30 @@
+# --- Next.js & Node ---
+node_modules/
+.next/
+out/
+build/
+.env*
+npm-debug.log*
+yarn-error.log*
+
+# --- Rust / Tauri ---
+src-tauri/target/
+src-tauri/gen/schemas/
+src-tauri/binaries/
+
+# --- Python (Sidecar) ---
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.pytest_cache/
+
+# --- Assets & Systèmes ---
+.DS_Store
+dist/
+assets/models/*.bin
+assets/models/*.onnx
+
+.claude/
