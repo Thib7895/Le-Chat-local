@@ -37,6 +37,11 @@ export interface Settings {
   modelsPath: string;
   selectedModel: string;
   selectedLang: string;
+  // LLM parameters for native Ollama API
+  temperature: number;
+  numCtx: number;
+  numPredict: number;
+  keepAlive: string;
 }
 
 export interface VoiceInfo {

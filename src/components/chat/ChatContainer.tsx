@@ -1,23 +1,45 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Settings, FileUp } from 'lucide-react';
+import { FileUp } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { nanoid } from 'nanoid';
 import { useChatStore } from '@/stores/chatStore';
+import { useConversationStore } from '@/stores/conversationStore';
 import { MistralLogo } from '@/components/icons';
+import { Sidebar } from '@/components/layout';
 import { Message } from './Message';
 import { InputBar } from './InputBar';
-import { SettingsModal } from '@/components/settings/SettingsModal';
 import { ImageAttachment } from '@/lib/types';
 import { convertFileToBase64, isImageFile, stripMarkdownForTTS, splitTextForTTS } from '@/lib/utils';
 
 export function ChatContainer() {
-  const { messages, isLoading, isGeneratingImage, sendMessage, generateImage, clearMessages } = useChatStore();
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const { messages, isLoading, isGeneratingImage, sendMessage, generateImage, clearMessages, loadSettings, cancelGeneration, setMessages } = useChatStore();
+  const {
+    conversations,
+    currentConversationId,
+    sidebarOpen,
+    initDatabase,
+    selectConversation,
+    deleteConversation,
+    toggleSidebar,
+    setSidebarOpen,
+    setCurrentConversationId,
+  } = useConversationStore();
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const hasMessages = messages.length > 0;
+
+  // Get current conversation title
+  const currentConversation = conversations.find((c) => c.id === currentConversationId);
+  const currentTitle = currentConversation?.title || 'Le Chat Local';
+
+  // --- Initialize database and load settings on mount ---
+  useEffect(() => {
+    loadSettings();
+    initDatabase();
+  }, [loadSettings, initDatabase]);
 
   // --- Drag & Drop State ---
   const [isDragging, setIsDragging] = useState(false);
@@ -101,23 +123,16 @@ export function ChatContainer() {
   }, []);
 
   const handleGenerateImage = useCallback((prompt: string) => {
-    generateImage(prompt);
+    void generateImage(prompt).catch(() => {
+      // Absorb any unhandled rejections (abort errors, etc.)
+    });
   }, [generateImage]);
 
+  const handleStopGeneration = useCallback(() => {
+    cancelGeneration();
+  }, [cancelGeneration]);
 
-  // --- Send Message ---
-  const handleSend = (content: string, image?: ImageAttachment | null) => {
-    sendMessage(content, image || null);
-    setSelectedImage(null);
-  };
-
-  const handleNewChat = () => {
-    stopSpeaking();
-    clearMessages();
-    setSelectedImage(null);
-  };
-
-  // --- TTS ---
+  // --- TTS (must be declared before handlers that use stopSpeaking) ---
   const [isSpeaking, setIsSpeaking] = useState(false);
   const ttsAbortRef = useRef<AbortController | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -129,6 +144,45 @@ export function ChatContainer() {
     ttsAbortRef.current = null;
     setIsSpeaking(false);
   }, []);
+
+  // --- Send Message ---
+  const handleSend = (content: string, image?: ImageAttachment | null) => {
+    void sendMessage(content, image || null).catch(() => {
+      // Absorb any unhandled rejections (abort errors, etc.)
+    });
+    setSelectedImage(null);
+  };
+
+  const handleNewChat = useCallback(async () => {
+    cancelGeneration();
+    stopSpeaking();
+    clearMessages();
+    setSelectedImage(null);
+    setCurrentConversationId(null);
+  }, [cancelGeneration, stopSpeaking, clearMessages, setCurrentConversationId]);
+
+  const handleSelectConversation = useCallback(async (id: string) => {
+    try {
+      cancelGeneration();
+      stopSpeaking();
+      const loadedMessages = await selectConversation(id);
+      setMessages(loadedMessages);
+    } catch (e) {
+      console.error('Failed to load conversation:', e);
+    }
+  }, [cancelGeneration, stopSpeaking, selectConversation, setMessages]);
+
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    try {
+      const wasCurrentConversation = id === currentConversationId;
+      await deleteConversation(id);
+      if (wasCurrentConversation) {
+        clearMessages();
+      }
+    } catch (e) {
+      console.error('Failed to delete conversation:', e);
+    }
+  }, [currentConversationId, deleteConversation, clearMessages]);
 
   const handleSpeak = async (text: string) => {
     // If already speaking, stop
@@ -171,10 +225,10 @@ export function ChatContainer() {
           audioBase64 = nextAudioPromise
             ? await nextAudioPromise
             : await invoke<string>('synthesize_speech', {
-                text: chunks[i],
-                lang: settings.selectedLang,
-                modelsPath: settings.modelsPath,
-              });
+              text: chunks[i],
+              lang: settings.selectedLang,
+              modelsPath: settings.modelsPath,
+            });
         } catch (synthError) {
           console.warn(`TTS: Chunk ${i + 1}/${chunks.length} synthesis failed, skipping`, synthError);
           nextAudioPromise = null;
@@ -195,10 +249,10 @@ export function ChatContainer() {
         // Prefetch next chunk while current one plays
         nextAudioPromise = (i + 1 < chunks.length)
           ? invoke<string>('synthesize_speech', {
-              text: chunks[i + 1],
-              lang: settings.selectedLang,
-              modelsPath: settings.modelsPath,
-            }).catch(() => null)
+            text: chunks[i + 1],
+            lang: settings.selectedLang,
+            modelsPath: settings.modelsPath,
+          }).catch(() => null)
           : null;
 
         // Decode and play current chunk
@@ -242,175 +296,166 @@ export function ChatContainer() {
   }, [messages]);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#FAFAFA' }}>
-      {/* Settings button */}
-      <button
-        onClick={() => setIsSettingsOpen(true)}
-        style={{
-          position: 'fixed',
-          top: 16,
-          right: 16,
-          zIndex: 20,
-          padding: 10,
-          borderRadius: 12,
-          border: 'none',
-          background: 'transparent',
-          cursor: 'pointer',
-        }}
-        aria-label="Settings"
-      >
-        <Settings style={{ width: 20, height: 20, color: '#9CA3AF' }} />
-      </button>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'row', background: '#FAFAFA' }}>
+      {/* ===== SIDEBAR (always in DOM, width controlled by isOpen) ===== */}
+      <Sidebar
+        isOpen={sidebarOpen}
+        conversations={conversations}
+        currentId={currentConversationId}
+        onSelect={handleSelectConversation}
+        onDelete={handleDeleteConversation}
+        onNewChat={handleNewChat}
+        onToggle={toggleSidebar}
+      />
 
-      {/* ===== DRAG & DROP OVERLAY ===== */}
-      {isDragging && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 50,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(255, 255, 255, 0.85)',
-            backdropFilter: 'blur(6px)',
-            WebkitBackdropFilter: 'blur(6px)',
-            pointerEvents: 'none',
-          }}
-        >
+      {/* ===== MAIN CONTENT AREA ===== */}
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'relative',
+          minWidth: 0,
+          overflow: 'hidden',
+          // Smooth transition in sync with sidebar
+          transition: 'margin-left 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+      >
+
+
+        {/* ===== DRAG & DROP OVERLAY ===== */}
+        {isDragging && (
           <div
             style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 50,
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: 16,
-              padding: '48px 64px',
-              borderRadius: 24,
-              border: '2px dashed #FF6B35',
-              background: 'rgba(255, 107, 53, 0.04)',
+              background: 'rgba(255, 255, 255, 0.85)',
+              backdropFilter: 'blur(6px)',
+              WebkitBackdropFilter: 'blur(6px)',
+              pointerEvents: 'none',
             }}
           >
-            <FileUp
-              style={{ width: 48, height: 48, color: '#FF6B35' }}
-              strokeWidth={1.5}
-            />
-            <p style={{
-              fontSize: 18,
-              fontWeight: 500,
-              color: '#1A1A1A',
-              margin: 0,
-            }}>
-              Drop your files here...
-            </p>
-            <p style={{
-              fontSize: 13,
-              color: '#9B9B9B',
-              margin: 0,
-            }}>
-              Supports images (PNG, JPG, GIF, WebP)
-            </p>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 16,
+                padding: '48px 64px',
+                borderRadius: 24,
+                border: '2px dashed #FF6B35',
+                background: 'rgba(255, 107, 53, 0.04)',
+              }}
+            >
+              <FileUp
+                style={{ width: 48, height: 48, color: '#FF6B35' }}
+                strokeWidth={1.5}
+              />
+              <p style={{
+                fontSize: 18,
+                fontWeight: 500,
+                color: '#1A1A1A',
+                margin: 0,
+              }}>
+                Drop your files here...
+              </p>
+              <p style={{
+                fontSize: 13,
+                color: '#9B9B9B',
+                margin: 0,
+              }}>
+                Supports images (PNG, JPG, GIF, WebP)
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Empty State - Logo higher, input bar below */}
-      {!hasMessages && (
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          padding: '0 16px',
-        }}>
-          {/* Logo - pushed to ~38% from top */}
-          <div style={{
-            flex: 1.2,
-            display: 'flex',
-            alignItems: 'flex-end',
-            justifyContent: 'center',
-            paddingBottom: 40,
-          }}>
-            <MistralLogo style={{ width: 72, height: 72 }} />
-          </div>
-
-          {/* Input Bar - in lower portion */}
+        {/* Empty State - Logo + Input in center */}
+        {!hasMessages && (
           <div style={{
             flex: 1,
             display: 'flex',
-            alignItems: 'flex-start',
+            flexDirection: 'column',
+            alignItems: 'center',
             justifyContent: 'center',
-            width: '100%',
-            paddingTop: 8,
+            padding: '0 16px',
+            paddingBottom: '12vh',
           }}>
-            <div style={{ width: '100%', maxWidth: 700 }}>
-              <InputBar
-                onSend={handleSend}
-                onNewChat={handleNewChat}
-                onGenerateImage={handleGenerateImage}
-                disabled={isLoading}
-                isGeneratingImage={isGeneratingImage}
-                selectedImage={selectedImage}
-                onClearImage={handleClearImage}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Chat State - Messages + Fixed Input */}
-      {hasMessages && (
-        <>
-          {/* Messages area - scrollable */}
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {/* Logo */}
             <div style={{
-              maxWidth: '48rem',
-              margin: '0 auto',
-              padding: '24px 16px 128px 16px',
+              marginBottom: 48,
             }}>
-              {messages.map((message, index) => (
-                <Message
-                  key={message.id}
-                  message={message}
-                  onSpeak={handleSpeak}
-                  isSpeaking={isSpeaking}
-                  isLast={message.role === 'assistant' && index === messages.length - 1}
-                />
-              ))}
-              <div ref={messagesEndRef} />
+              <MistralLogo style={{ width: 96, height: 96 }} />
             </div>
-          </div>
 
-          {/* Input Bar - Fixed at bottom */}
-          <div style={{
-            position: 'fixed',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            background: 'linear-gradient(to top, #FAFAFA 60%, transparent)',
-            padding: '24px 16px',
-          }}>
-            <div style={{ maxWidth: 700, margin: '0 auto' }}>
+            {/* Input Bar */}
+            <div style={{ width: '100%', maxWidth: 750 }}>
               <InputBar
                 onSend={handleSend}
                 onNewChat={handleNewChat}
                 onGenerateImage={handleGenerateImage}
-                disabled={isLoading}
+                disabled={isGeneratingImage}
+                isGenerating={isLoading && !isGeneratingImage}
                 isGeneratingImage={isGeneratingImage}
+                onStopGeneration={handleStopGeneration}
                 selectedImage={selectedImage}
                 onClearImage={handleClearImage}
               />
             </div>
           </div>
-        </>
-      )}
+        )}
 
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-      />
+        {/* Chat State - Messages + InputBar at bottom */}
+        {hasMessages && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Messages area - scrollable */}
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <div style={{
+                maxWidth: '48rem',
+                margin: '0 auto',
+                padding: '24px 16px',
+              }}>
+                {messages.map((message, index) => (
+                  <Message
+                    key={message.id}
+                    message={message}
+                    onSpeak={handleSpeak}
+                    isSpeaking={isSpeaking}
+                    isLast={message.role === 'assistant' && index === messages.length - 1}
+                  />
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            {/* Input Bar - at bottom of content area (not fixed) */}
+            <div style={{
+              background: 'linear-gradient(to top, #FAFAFA 60%, transparent)',
+              padding: '24px 16px',
+            }}>
+              <div style={{ maxWidth: 700, margin: '0 auto' }}>
+                <InputBar
+                  onSend={handleSend}
+                  onNewChat={handleNewChat}
+                  onGenerateImage={handleGenerateImage}
+                  disabled={isGeneratingImage}
+                  isGenerating={isLoading && !isGeneratingImage}
+                  isGeneratingImage={isGeneratingImage}
+                  onStopGeneration={handleStopGeneration}
+                  selectedImage={selectedImage}
+                  onClearImage={handleClearImage}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -3,7 +3,7 @@
 STT Sidecar for Le Chat Local — Speech-to-Text with faster-whisper.
 
 Communicates via JSON-RPC over stdin/stdout with the Tauri application.
-Uses faster-whisper with distil-large-v3 model, CUDA acceleration, and VAD filtering.
+Uses faster-whisper with large-v3-turbo model, CUDA acceleration, and VAD filtering.
 """
 import base64
 import json
@@ -63,9 +63,9 @@ class WhisperSTTEngine:
         try:
             from faster_whisper import WhisperModel
 
-            log_debug("Loading faster-whisper model (distil-large-v3, cuda, int8_float16)...")
+            log_debug("Loading faster-whisper model (large-v3-turbo, cuda, int8_float16)...")
             self.model = WhisperModel(
-                "distil-large-v3",
+                "large-v3-turbo",
                 device="cuda",
                 compute_type="int8_float16",
             )
@@ -81,7 +81,7 @@ class WhisperSTTEngine:
 
                 log_debug("Retrying with CPU...")
                 self.model = WhisperModel(
-                    "distil-large-v3",
+                    "large-v3-turbo",
                     device="cpu",
                     compute_type="int8",
                 )
@@ -146,11 +146,13 @@ class WhisperSTTEngine:
 
             # Transcribe with faster-whisper
             transcribe_kwargs = {
+                "language": "fr",
                 "beam_size": 5,
                 "vad_filter": True,
                 "vad_parameters": {
                     "min_silence_duration_ms": 500,
                 },
+                "task": "transcribe",  # Explicitly transcribe, never translate
             }
             if lang:
                 transcribe_kwargs["language"] = lang

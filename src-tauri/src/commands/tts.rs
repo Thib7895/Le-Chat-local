@@ -4,6 +4,7 @@ use tokio::sync::Mutex;
 use tauri::{command, AppHandle, State};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use whatlang::{detect, Lang};
 
 #[derive(Deserialize)]
 struct SynthesizeResponse {
@@ -106,6 +107,15 @@ impl TtsState {
     }
 }
 
+/// Detect language from text and return appropriate TTS language code.
+/// Returns "en-us" for English, "fr-fr" for French (or any other language).
+fn detect_language(text: &str) -> &'static str {
+    match detect(text) {
+        Some(info) if info.lang() == Lang::Eng => "en-us",
+        _ => "fr-fr", // Default to French for non-English
+    }
+}
+
 /// Spawn a new Python TTS sidecar process.
 fn spawn_python(app: &AppHandle) -> Result<TtsProcess, String> {
     let python_exe = "C:\\Users\\lemar\\anaconda3\\python.exe";
@@ -189,9 +199,12 @@ pub async fn synthesize_speech(
     app: AppHandle,
     state: State<'_, TtsState>,
     text: String,
-    lang: String,
+    _lang: String,  // Paramètre ignoré - on utilise la détection auto
     _models_path: String,
 ) -> Result<String, String> {
+    // Auto-detect language from the text content
+    let detected_lang = detect_language(&text);
+
     let mut guard = state.process.lock().await;
 
     // Spawn process if not running yet (lazy init)
@@ -204,7 +217,7 @@ pub async fn synthesize_speech(
     // Try to send request on the existing process
     let result = {
         let process = guard.as_mut().unwrap();
-        send_request(id, process, &text, &lang).await
+        send_request(id, process, &text, detected_lang).await
     };
 
     match result {
@@ -223,7 +236,7 @@ pub async fn synthesize_speech(
             // Retry once
             let id2 = state.request_id.fetch_add(1, Ordering::Relaxed);
             let process = guard.as_mut().unwrap();
-            send_request(id2, process, &text, &lang).await
+            send_request(id2, process, &text, detected_lang).await
         }
     }
 }

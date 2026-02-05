@@ -12,13 +12,15 @@ interface InputBarProps {
   onNewChat?: () => void;
   onGenerateImage?: (prompt: string) => void;
   disabled?: boolean;
+  isGenerating?: boolean;
   isGeneratingImage?: boolean;
+  onStopGeneration?: () => void;
   selectedImage?: ImageAttachment | null;
   onClearImage?: () => void;
   onMicResult?: (text: string) => void;
 }
 
-export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false, isGeneratingImage = false, selectedImage, onClearImage, onMicResult }: InputBarProps) {
+export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false, isGenerating = false, isGeneratingImage = false, onStopGeneration, selectedImage, onClearImage, onMicResult }: InputBarProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -121,13 +123,10 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
             new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
           );
 
-          const { settings } = useChatStore.getState();
-          // Map settings lang to whisper lang code
-          const lang = settings.selectedLang === 'fr-fr' ? 'fr' : settings.selectedLang === 'en-us' ? 'en' : undefined;
-
+          // Let Whisper auto-detect the language (no forced lang parameter)
           const result = await invoke<{ text: string; language: string }>('stt_transcribe', {
             audioBase64: base64,
-            lang,
+            // lang: undefined → Whisper auto-detects language
           });
 
           if (result.text && result.text.trim()) {
@@ -220,10 +219,10 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
         style={{
           position: 'relative',
           background: '#FFFFFF',
-          borderRadius: 24,
+          borderRadius: 18,
           border: isRecording ? '1px solid #EF4444' : '1px solid rgba(229, 231, 235, 0.6)',
           overflow: 'hidden',
-          boxShadow: '0 2px 16px rgba(0, 0, 0, 0.06), 0 0px 4px rgba(0, 0, 0, 0.03)',
+          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.04)',
           transition: 'border-color 0.2s',
         }}
       >
@@ -305,7 +304,7 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
           </div>
         ) : (
           // Normal text input
-          <div style={{ padding: '16px 20px 8px 20px' }}>
+          <div style={{ padding: '18px 20px 10px 20px' }}>
             <textarea
               ref={textareaRef}
               value={input}
@@ -323,6 +322,7 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
                 fontSize: 15,
                 lineHeight: 1.6,
                 outline: 'none',
+                minHeight: 45,
                 maxHeight: 150,
                 opacity: disabled || isTranscribing ? 0.5 : 1,
                 fontFamily: 'inherit',
@@ -336,7 +336,7 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '0 14px 14px 14px',
+          padding: '0 14px 12px 14px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {/* Cat head button - orange square */}
@@ -421,7 +421,7 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
                   flexShrink: 0,
                   width: 40,
                   height: 40,
-                  borderRadius: '50%',
+                  borderRadius: 12,
                   background: '#EF4444',
                   border: 'none',
                   cursor: 'pointer',
@@ -445,7 +445,7 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
                   flexShrink: 0,
                   width: 40,
                   height: 40,
-                  borderRadius: '50%',
+                  borderRadius: 12,
                   background: '#6B7280',
                   border: 'none',
                   cursor: 'not-allowed',
@@ -459,8 +459,31 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
               </button>
             )}
 
+            {/* Generating state: show stop button */}
+            {!isRecording && !isTranscribing && isGenerating && (
+              <button
+                type="button"
+                onClick={onStopGeneration}
+                style={{
+                  flexShrink: 0,
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  background: '#1A1A1A',
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                aria-label="Stop generation"
+              >
+                <Square style={{ width: 14, height: 14, color: 'white', fill: 'white' }} />
+              </button>
+            )}
+
             {/* Normal state: mic + send */}
-            {!isRecording && !isTranscribing && (
+            {!isRecording && !isTranscribing && !isGenerating && (
               <>
                 {!hasContent && (
                   <button
@@ -471,7 +494,7 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
                       flexShrink: 0,
                       width: 40,
                       height: 40,
-                      borderRadius: '50%',
+                      borderRadius: 12,
                       background: '#1A1A1A',
                       border: 'none',
                       cursor: 'pointer',
@@ -496,7 +519,7 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
                         flexShrink: 0,
                         width: 40,
                         height: 40,
-                        borderRadius: '50%',
+                        borderRadius: 12,
                         background: 'transparent',
                         border: 'none',
                         cursor: 'pointer',
@@ -517,7 +540,7 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
                         flexShrink: 0,
                         width: 40,
                         height: 40,
-                        borderRadius: '50%',
+                        borderRadius: 12,
                         background: '#1A1A1A',
                         border: 'none',
                         cursor: 'pointer',

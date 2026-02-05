@@ -3,13 +3,34 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub ollama_url: String,
     pub selected_voice: String,
     pub models_path: String,
     pub selected_model: String,
     pub selected_lang: String,
+    // LLM parameters for native Ollama API
+    pub temperature: f32,
+    pub num_ctx: u32,
+    pub num_predict: i32,
+    pub keep_alive: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            ollama_url: "http://localhost:11434".to_string(),
+            selected_voice: "af_heart".to_string(),
+            models_path: String::new(),
+            selected_model: String::new(),
+            selected_lang: "en-us".to_string(),
+            temperature: 0.7,
+            num_ctx: 4096,
+            num_predict: 2048,
+            keep_alive: "5m".to_string(),
+        }
+    }
 }
 
 fn get_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -30,28 +51,15 @@ pub async fn get_settings(app: AppHandle) -> Result<Settings, String> {
     let path = get_settings_path(&app)?;
 
     if !path.exists() {
-        // Return default settings
-        return Ok(Settings {
-            ollama_url: "http://localhost:11434/v1".to_string(),
-            selected_voice: "af_heart".to_string(),
-            models_path: String::new(),
-            selected_model: String::new(),
-            selected_lang: "en-us".to_string(),
-        });
+        return Ok(Settings::default());
     }
 
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read settings: {}", e))?;
 
     serde_json::from_str(&content).or_else(|_| {
-        // Old settings format — return defaults
-        Ok(Settings {
-            ollama_url: "http://localhost:11434/v1".to_string(),
-            selected_voice: "af_heart".to_string(),
-            models_path: String::new(),
-            selected_model: String::new(),
-            selected_lang: "en-us".to_string(),
-        })
+        // Old settings format or parse error — return defaults
+        Ok(Settings::default())
     })
 }
 

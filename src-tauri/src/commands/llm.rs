@@ -3,7 +3,8 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-pub const MODEL_NAME: &str = "ministral-3:3b-instruct-2512-q4_K_M";
+/// Default model used when settings.selected_model is empty
+pub const DEFAULT_MODEL: &str = "ministral-3:3b-instruct-2512-q4_K_M";
 
 #[derive(Serialize)]
 struct ChatRequest {
@@ -164,14 +165,15 @@ pub async fn ensure_ollama_running() -> Result<bool, String> {
 
 /// Pre-load model into VRAM/RAM at startup via native Ollama API
 #[tauri::command]
-pub async fn preload_model() -> Result<(), String> {
+pub async fn preload_model(model: String) -> Result<(), String> {
+    let model_name = if model.is_empty() { DEFAULT_MODEL.to_string() } else { model };
     let client = Client::new();
-    eprintln!("Ollama: Pre-loading model {}...", MODEL_NAME);
+    eprintln!("Ollama: Pre-loading model {}...", model_name);
 
     let resp = client
         .post("http://localhost:11434/api/generate")
         .json(&serde_json::json!({
-            "model": MODEL_NAME,
+            "model": model_name,
             "keep_alive": -1,
             "prompt": ""
         }))
@@ -185,20 +187,21 @@ pub async fn preload_model() -> Result<(), String> {
 
     // Consume the streaming response body (Ollama sends {"done":true})
     let _ = resp.text().await;
-    eprintln!("Ollama: Model {} pre-loaded into memory", MODEL_NAME);
+    eprintln!("Ollama: Model {} pre-loaded into memory", model_name);
     Ok(())
 }
 
 /// Unload model from memory on app close
 #[tauri::command]
-pub async fn unload_model() -> Result<(), String> {
+pub async fn unload_model(model: String) -> Result<(), String> {
+    let model_name = if model.is_empty() { DEFAULT_MODEL.to_string() } else { model };
     let client = Client::new();
-    eprintln!("Ollama: Unloading model {}...", MODEL_NAME);
+    eprintln!("Ollama: Unloading model {}...", model_name);
 
     let resp = client
         .post("http://localhost:11434/api/generate")
         .json(&serde_json::json!({
-            "model": MODEL_NAME,
+            "model": model_name,
             "keep_alive": 0,
             "prompt": ""
         }))
@@ -208,7 +211,7 @@ pub async fn unload_model() -> Result<(), String> {
     if let Ok(r) = resp {
         let _ = r.text().await; // consume body
     }
-    eprintln!("Ollama: Model {} unloaded", MODEL_NAME);
+    eprintln!("Ollama: Model {} unloaded", model_name);
     Ok(())
 }
 

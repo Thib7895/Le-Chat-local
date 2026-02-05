@@ -25,6 +25,14 @@ tauri-plugin-http = "2.0.0-rc"
 reqwest = { version = "0.11", features = ["stream", "json"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 base64 = "0.22"
 scraper = "0.20"
 env_logger = "0.11"
+urlencoding = "2.1"
+chrono = "0.4"
+url = "2.5"
+futures = "0.3"
+whatlang = "0.16"
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid = { version = "1.10", features = ["v4"] }

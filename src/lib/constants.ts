@@ -22,10 +22,16 @@ export const COLORS = {
 } as const;
 
 export const DEFAULT_SETTINGS = {
-  ollamaUrl: 'http://localhost:11434/v1',
+  ollamaUrl: 'http://localhost:11434',
   selectedLang: 'en-us',
   modelsPath: 'D:\\Le Chat\\assets\\models',
   selectedModel: 'ministral-3:3b-instruct-2512-q4_K_M',
+  selectedVoice: 'af_heart',
+  // LLM parameters for native Ollama API
+  temperature: 0.7,
+  numCtx: 4096,
+  numPredict: 2048,
+  keepAlive: '5m',
 } as const;
 
 export const SHADOWS = {

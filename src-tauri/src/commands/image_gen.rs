@@ -1,7 +1,7 @@
 use reqwest::Client;
 use serde::Deserialize;
 
-use super::llm::{preload_model, unload_model};
+use super::llm::{preload_model, unload_model, DEFAULT_MODEL};
 
 #[derive(Deserialize)]
 struct Txt2ImgResponse {
@@ -17,7 +17,8 @@ struct Txt2ImgResponse {
 /// Step F: 2s safety delay for OS/driver VRAM release
 /// Finally: Reload LLM (preload_model) -- guaranteed unconditionally
 #[tauri::command]
-pub async fn generate_image(prompt: String) -> Result<String, String> {
+pub async fn generate_image(prompt: String, model: Option<String>) -> Result<String, String> {
+    let model_name = model.unwrap_or_else(|| DEFAULT_MODEL.to_string());
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(300)) // 5 min timeout for slow generation on RTX 3050
         .build()
@@ -25,7 +26,7 @@ pub async fn generate_image(prompt: String) -> Result<String, String> {
 
     // Step A: Unload LLM to free VRAM
     eprintln!("ImageGen: Unloading LLM to free VRAM...");
-    if let Err(e) = unload_model().await {
+    if let Err(e) = unload_model(model_name.clone()).await {
         eprintln!("ImageGen: Warning - failed to unload model: {}", e);
         // Continue anyway; SD might still work if model was already unloaded
     }
@@ -91,7 +92,7 @@ pub async fn generate_image(prompt: String) -> Result<String, String> {
 
     // ALWAYS reload LLM -- this is the guarantee
     eprintln!("ImageGen: Reloading LLM...");
-    if let Err(e) = preload_model().await {
+    if let Err(e) = preload_model(model_name).await {
         eprintln!("ImageGen: Warning - failed to reload model: {}", e);
     }
 

@@ -1,0 +1,33 @@
+use_default_settings: true
+
+server:
+  secret_key: "lechat-local-searxng-secret-key-2026"
+  limiter: false
+  image_proxy: false
+  bind_address: "0.0.0.0:8080"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+ui:
+  static_use_hash: true
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+
+engines:
+  - name: google
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: wikipedia
+    disabled: false
