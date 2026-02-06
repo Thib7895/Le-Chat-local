@@ -118,9 +118,6 @@ export function Sidebar({
   };
 
   const handleNewChatClick = () => {
-    if (!isOpen) {
-      handleOpenLocal();
-    }
     onNewChat();
   };
 
@@ -240,20 +237,65 @@ export function Sidebar({
               Chats
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px' }}>
-              {conversations.map((conv) => (
-                <div key={conv.id}
-                  onClick={() => onSelect(conv.id)}
-                  style={{
-                    padding: '10px 12px', margin: '2px 0', borderRadius: 8, cursor: 'pointer',
-                    backgroundColor: conv.id === currentId ? '#EBEBEB' : 'transparent',
-                    boxShadow: conv.id === currentId ? 'inset 3px 0 0 0 #FF6B35' : 'none',
-                  }}
-                >
-                  <div style={{ fontSize: 14, color: COLORS.text.primary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {cleanMarkdown(conv.title)}
+              {conversations.map((conv) => {
+                const isHovered = hoveredId === conv.id;
+                const isActive = conv.id === currentId;
+                return (
+                  <div
+                    key={conv.id}
+                    onClick={() => onSelect(conv.id)}
+                    onMouseEnter={() => setHoveredId(conv.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    style={{
+                      position: 'relative',
+                      padding: '10px 12px',
+                      paddingRight: 36, // Reserve space for delete button
+                      margin: '2px 0',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      backgroundColor: (isActive || isHovered) ? '#EBEBEB' : 'transparent',
+                      boxShadow: (isActive || isHovered) ? 'inset 3px 0 0 0 #FF6B35' : 'none',
+                    }}
+                  >
+                    <div style={{ fontSize: 14, color: COLORS.text.primary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {cleanMarkdown(conv.title)}
+                    </div>
+
+                    {/* Delete Button - visible on hover */}
+                    {isHovered && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(conv.id);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          right: 8,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          width: 20,
+                          height: 20,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: 4,
+                          border: 'none',
+                          backgroundColor: 'transparent',
+                          color: '#9B9B9B',
+                          cursor: 'pointer',
+                          fontSize: 16,
+                          lineHeight: 1,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = '#FF6B35')}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = '#9B9B9B')}
+                        aria-label="Supprimer la conversation"
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </motion.div>
         )}

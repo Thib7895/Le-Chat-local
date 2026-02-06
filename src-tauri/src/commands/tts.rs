@@ -49,6 +49,16 @@ impl Default for TtsState {
 }
 
 impl TtsState {
+    /// Stop the Python TTS process on app exit
+    pub async fn stop(&self) {
+        let mut guard = self.process.lock().await;
+        if let Some(process) = guard.take() {
+            eprintln!("TTS: Stopping Python process...");
+            let _ = process.child.kill();
+            eprintln!("TTS: Python process terminated");
+        }
+    }
+
     /// Pre-spawn the Python process and pre-load the ONNX model at app startup.
     /// Errors are logged but not fatal — synthesize_speech will retry lazily.
     pub async fn ensure_started(&self, app: &AppHandle) {

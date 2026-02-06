@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect, KeyboardEvent, ChangeEvent } from 'react';
-import { Mic, X, Loader2, Square, ImageIcon } from 'lucide-react';
+import { Mic, X, Loader2, Square, ImageIcon, Ban } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { CatHeadIcon, PlusIcon, SendArrowIcon } from '@/components/icons';
 import { ImageAttachment } from '@/lib/types';
 import { useChatStore } from '@/stores/chatStore';
+import { useSdForgeStore } from '@/stores/sdForgeStore';
 
 interface InputBarProps {
   onSend: (message: string, image?: ImageAttachment | null) => void;
@@ -23,6 +24,9 @@ interface InputBarProps {
 export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false, isGenerating = false, isGeneratingImage = false, onStopGeneration, selectedImage, onClearImage, onMicResult }: InputBarProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // SD Forge ready state
+  const { isReady: isSdForgeReady } = useSdForgeStore();
 
   // --- Recording State ---
   const [isRecording, setIsRecording] = useState(false);
@@ -384,8 +388,14 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
             <button
               type="button"
               onClick={handleImageGenerate}
-              disabled={!input.trim() || disabled || isGeneratingImage}
-              title={input.trim() ? 'Generate image from prompt' : 'Type a prompt first'}
+              disabled={!isSdForgeReady || !input.trim() || disabled || isGeneratingImage}
+              title={
+                !isSdForgeReady
+                  ? 'Chargement de SD Forge...'
+                  : !input.trim()
+                    ? 'Écrivez un prompt d\'abord'
+                    : 'Générer une image'
+              }
               style={{
                 flexShrink: 0,
                 width: 40,
@@ -393,17 +403,19 @@ export function InputBar({ onSend, onNewChat, onGenerateImage, disabled = false,
                 borderRadius: 12,
                 background: 'transparent',
                 border: '1px solid #E5E7EB',
-                cursor: (!input.trim() || disabled || isGeneratingImage) ? 'not-allowed' : 'pointer',
+                cursor: (!isSdForgeReady || !input.trim() || disabled || isGeneratingImage) ? 'not-allowed' : 'pointer',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                opacity: (!input.trim() || disabled || isGeneratingImage) ? 0.4 : 1,
+                opacity: (!isSdForgeReady || !input.trim() || disabled || isGeneratingImage) ? 0.4 : 1,
                 transition: 'opacity 0.15s',
               }}
-              aria-label="Generate image"
+              aria-label={!isSdForgeReady ? 'Chargement...' : 'Générer une image'}
             >
               {isGeneratingImage ? (
                 <Loader2 style={{ width: 16, height: 16, color: '#6B7280', animation: 'spin 1s linear infinite' }} />
+              ) : !isSdForgeReady ? (
+                <Ban style={{ width: 16, height: 16, color: '#9CA3AF' }} />
               ) : (
                 <ImageIcon style={{ width: 16, height: 16, color: '#6B7280' }} />
               )}

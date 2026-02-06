@@ -13,6 +13,12 @@ export interface ImageGenState {
   startTime?: number;       // Date.now() for live timer
 }
 
+/** Persisted image generation result (stored in database) */
+export interface PersistedImageGen {
+  refinedPrompt: string;
+  generatedImage: string;  // base64 PNG raw (no data: prefix)
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';

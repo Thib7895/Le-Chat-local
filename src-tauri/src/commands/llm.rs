@@ -21,6 +21,8 @@ struct ChatRequest {
 pub struct ChatMessage {
     role: String,
     content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    images: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -38,6 +40,140 @@ struct StreamChoice {
 #[derive(Deserialize)]
 struct DeltaContent {
     content: Option<String>,
+}
+
+/// Native Ollama API request format
+#[derive(Serialize)]
+struct OllamaChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    stream: bool,
+    options: OllamaOptions,
+    keep_alive: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<Vec<String>>,
+}
+
+#[derive(Serialize)]
+struct OllamaOptions {
+    temperature: f32,
+    num_ctx: i32,
+    num_predict: i32,
+}
+
+/// Native Ollama streaming response chunk
+#[derive(Deserialize)]
+struct OllamaStreamChunk {
+    message: Option<OllamaMessage>,
+    done: bool,
+    #[serde(default)]
+    prompt_eval_count: Option<i32>,
+    #[serde(default)]
+    eval_count: Option<i32>,
+    #[serde(default)]
+    eval_duration: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct OllamaMessage {
+    content: String,
+}
+
+/// Payload emitted when streaming is done
+#[derive(Serialize, Clone)]
+pub struct StreamDonePayload {
+    pub prompt_eval_count: Option<i32>,
+    pub eval_count: Option<i32>,
+    pub eval_duration: Option<i64>,
+}
+
+/// Stream chat using native Ollama API (/api/chat)
+#[tauri::command]
+pub async fn stream_chat(
+    app: AppHandle,
+    session_id: String,
+    model: String,
+    messages: Vec<ChatMessage>,
+    temperature: f32,
+    num_ctx: i32,
+    num_predict: i32,
+    keep_alive: String,
+    stop: Option<Vec<String>>,
+) -> Result<(), String> {
+    let client = Client::new();
+    let url = "http://127.0.0.1:11434/api/chat";
+
+    let request = OllamaChatRequest {
+        model,
+        messages,
+        stream: true,
+        options: OllamaOptions {
+            temperature,
+            num_ctx,
+            num_predict,
+        },
+        keep_alive,
+        stop,
+    };
+
+    let response = client
+        .post(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API error: {}", response.status()));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Stream error: {}", e))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process complete JSON lines (Ollama sends newline-delimited JSON)
+        while let Some(line_end) = buffer.find('\n') {
+            let line = buffer[..line_end].trim().to_string();
+            buffer = buffer[line_end + 1..].to_string();
+
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Ok(chunk) = serde_json::from_str::<OllamaStreamChunk>(&line) {
+                if let Some(msg) = &chunk.message {
+                    if !msg.content.is_empty() {
+                        // Emit token with session_id prefix for multiplexing
+                        app.emit(&format!("llm-token-{}", session_id), msg.content.clone())
+                            .map_err(|e| format!("Emit error: {}", e))?;
+                    }
+                }
+
+                if chunk.done {
+                    let payload = StreamDonePayload {
+                        prompt_eval_count: chunk.prompt_eval_count,
+                        eval_count: chunk.eval_count,
+                        eval_duration: chunk.eval_duration,
+                    };
+                    app.emit(&format!("llm-done-{}", session_id), payload)
+                        .map_err(|e| format!("Emit error: {}", e))?;
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // Stream ended without done flag
+    app.emit(&format!("llm-done-{}", session_id), StreamDonePayload {
+        prompt_eval_count: None,
+        eval_count: None,
+        eval_duration: None,
+    }).map_err(|e| format!("Emit error: {}", e))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -143,7 +279,20 @@ pub async fn ensure_ollama_running() -> Result<bool, String> {
         return Err("Ollama not found. Install from https://ollama.com".to_string());
     }
 
-    // Launch "ollama serve" in background (detached)
+    // Launch "ollama serve" in background (detached, no console window)
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        std::process::Command::new(&ollama_path)
+            .arg("serve")
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Failed to start Ollama: {}", e))?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
     std::process::Command::new(&ollama_path)
         .arg("serve")
         .spawn()

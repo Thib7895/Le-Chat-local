@@ -46,6 +46,16 @@ impl Default for SttState {
 }
 
 impl SttState {
+    /// Stop the Python STT process on app exit
+    pub async fn stop(&self) {
+        let mut guard = self.process.lock().await;
+        if let Some(process) = guard.take() {
+            eprintln!("STT: Stopping Python process...");
+            let _ = process.child.kill();
+            eprintln!("STT: Python process terminated");
+        }
+    }
+
     /// Pre-spawn the Python STT process and pre-load the model at app startup.
     /// Errors are logged but not fatal — stt_transcribe will retry lazily.
     pub async fn ensure_started(&self, app: &AppHandle) {

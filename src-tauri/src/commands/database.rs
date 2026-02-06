@@ -36,7 +36,8 @@ pub struct DbMessage {
     pub role: String,
     pub content: String,
     pub timestamp: i64,
-    pub images: Option<String>, // JSON array of ImageAttachment
+    pub images: Option<String>,    // JSON array of ImageAttachment
+    pub image_gen: Option<String>, // JSON object of PersistedImageGen
 }
 
 /// Initialize the database with schema
@@ -70,6 +71,19 @@ fn init_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC);
         "#,
     )?;
+
+    // Migration: Add image_gen column if it doesn't exist
+    let has_image_gen: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'image_gen'")?
+        .query_row([], |row| row.get::<_, i32>(0))
+        .map(|count| count > 0)
+        .unwrap_or(false);
+
+    if !has_image_gen {
+        conn.execute("ALTER TABLE messages ADD COLUMN image_gen TEXT", [])?;
+        eprintln!("Database: Migrated - added image_gen column");
+    }
+
     Ok(())
 }
 
@@ -145,7 +159,7 @@ pub fn get_conversation_messages(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, conversation_id, role, content, timestamp, images
+            "SELECT id, conversation_id, role, content, timestamp, images, image_gen
              FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -159,6 +173,7 @@ pub fn get_conversation_messages(
                 content: row.get(3)?,
                 timestamp: row.get(4)?,
                 images: row.get(5)?,
+                image_gen: row.get(6)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -203,15 +218,16 @@ pub fn save_message(message: DbMessage, state: State<DatabaseState>) -> Result<(
 
     // Insert message
     conn.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, timestamp, images)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO messages (id, conversation_id, role, content, timestamp, images, image_gen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             message.id,
             message.conversation_id,
             message.role,
             message.content,
             message.timestamp,
-            message.images
+            message.images,
+            message.image_gen
         ],
     )
     .map_err(|e| e.to_string())?;

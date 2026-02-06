@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { Message, ImageAttachment } from '@/lib/types';
+import { Message, ImageAttachment, PersistedImageGen } from '@/lib/types';
 
 /** Conversation metadata from database */
 export interface Conversation {
@@ -18,7 +18,8 @@ export interface DbMessage {
   role: string;
   content: string;
   timestamp: number;
-  images: string | null; // JSON string of ImageAttachment[]
+  images: string | null;   // JSON string of ImageAttachment[]
+  imageGen: string | null; // JSON string of PersistedImageGen
 }
 
 /** Event payload for title updates */
@@ -117,13 +118,31 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       });
 
       // Convert DbMessage to Message format
-      const messages: Message[] = dbMessages.map((dbMsg) => ({
-        id: dbMsg.id,
-        role: dbMsg.role as 'user' | 'assistant' | 'system',
-        content: dbMsg.content,
-        timestamp: dbMsg.timestamp,
-        images: dbMsg.images ? JSON.parse(dbMsg.images) as ImageAttachment[] : undefined,
-      }));
+      const messages: Message[] = dbMessages.map((dbMsg) => {
+        // Reconstruct imageGen from persisted data
+        let imageGen: Message['imageGen'] = undefined;
+        if (dbMsg.imageGen) {
+          try {
+            const persisted = JSON.parse(dbMsg.imageGen) as PersistedImageGen;
+            imageGen = {
+              status: 'done',
+              refinedPrompt: persisted.refinedPrompt,
+              generatedImage: persisted.generatedImage,
+            };
+          } catch (e) {
+            console.warn('Failed to parse imageGen:', e);
+          }
+        }
+
+        return {
+          id: dbMsg.id,
+          role: dbMsg.role as 'user' | 'assistant' | 'system',
+          content: dbMsg.content,
+          timestamp: dbMsg.timestamp,
+          images: dbMsg.images ? JSON.parse(dbMsg.images) as ImageAttachment[] : undefined,
+          imageGen,
+        };
+      });
 
       set({ currentConversationId: id });
       return messages;
@@ -177,6 +196,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   saveMessage: async (message: Message, conversationId: string) => {
     try {
+      // Only persist imageGen if status='done' with generated image
+      let imageGenJson: string | null = null;
+      if (message.imageGen?.status === 'done' && message.imageGen.generatedImage) {
+        const persistedImageGen: PersistedImageGen = {
+          refinedPrompt: message.imageGen.refinedPrompt || '',
+          generatedImage: message.imageGen.generatedImage,
+        };
+        imageGenJson = JSON.stringify(persistedImageGen);
+      }
+
       const dbMessage: DbMessage = {
         id: message.id,
         conversationId,
@@ -184,6 +213,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         content: message.content,
         timestamp: message.timestamp,
         images: message.images ? JSON.stringify(message.images) : null,
+        imageGen: imageGenJson,
       };
 
       await invoke('save_message', { message: dbMessage });

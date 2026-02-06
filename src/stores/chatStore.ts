@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { nanoid } from 'nanoid';
-import { fetch } from '@tauri-apps/plugin-http';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { Message, ImageAttachment } from '@/lib/types';
 import { DEFAULT_SETTINGS } from '@/lib/constants';
 import { useConversationStore } from './conversationStore';
@@ -56,23 +56,30 @@ function safeAbort(controller: AbortController | null): void {
   }
 }
 
-const IMAGE_REFINE_SYSTEM_PROMPT = `You are a Stable Diffusion prompt engineer. The user will give you a description of an image they want to generate. Your job is to rewrite it as an optimized Stable Diffusion prompt.
+const IMAGE_REFINE_SYSTEM_PROMPT = `
+You are an image prompt expander.
 
-Rules:
-- Output ONLY the prompt, nothing else. No explanations, no preamble.
-- Write in English regardless of input language.
-- Use comma-separated descriptive tags and phrases.
-- Include quality boosters: "masterpiece, best quality, highly detailed"
-- Include relevant style tags (photorealistic, cinematic lighting, etc.)
-- Include relevant technical tags (8k, sharp focus, depth of field, etc.)
+Task: expand the user's request into a clear, generator-friendly Stable Diffusion prompt while preserving intent. Add only composition + micro-detail, not a new vibe.
+
+IMPORTANT: If conversation context is provided, use it to understand what the user is referring to (e.g., "similar image", "like that", "same style"). The context may include descriptions of images the user uploaded or that were discussed.
+
+Hard rules:
+- Do NOT add quality/tech buzzwords by default (no "masterpiece", "best quality", "8k", "ultra detailed", "sharp focus", "depth of field").
+- Do NOT include negative prompt.
+- Avoid non-visual storytelling phrases (no "breaking the enchantment", "unorthodox harmony", etc.). Describe only what can be seen.
+- If the user is vague, use a "nice default": for example, a realistic photo, soft natural light, neutral background, centered framing, plus 2–4 micro-detail cues (fur texture, whiskers, eyes ...).
+- Only add details that help composition and clarity.
 - Keep it under 200 words.
-- Do NOT include negative prompt.`;
+- English only.
+- Output ONLY the prompt.
+`;
+
 
 const AGENT_SYSTEM_PROMPT = `Tu es Le Chat, un assistant IA intelligent intégré dans une application locale.
 Tu disposes d'outils puissants pour interagir avec le monde réel.
 
 TES DIRECTIVES ABSOLUES :
-1.  PROACTIVITÉ : Ne demande JAMAIS la permission d'utiliser un outil. Si une question nécessite une info externe ou un calcul, utilise l'outil IMMÉDIATEMENT. Ne dis pas "Je peux chercher...", cherche !
+1.  PROACTIVITÉ : Ne demande JAMAIS la permission d'utiliser un outil. Si une question nécessite une info externe, utilise l'outil IMMÉDIATEMENT. Ne dis pas "Je peux chercher...", cherche !
 2.  HONNÊTETÉ : N'invente jamais de faits, d'adresses, de prix ou de données météo. Si tu n'as pas l'info dans ton contexte immédiat, utilise SEARCH_WEB.
 3.  RÉPONSES COURTES : Quand tu lances une commande, n'écris rien d'autre. Juste la commande.
 
@@ -84,8 +91,9 @@ Commande : SEARCH_WEB: [ta requête courte]
   User: "Il fait beau à Dublin ?"
   Toi: SEARCH_WEB: météo dublin aujourd'hui
 ---
-GESTION DU CONTEXTE :
-Si tu reçois un message commençant par "CONTEXTE WEB:", cela signifie que l'outil a fonctionné. Utilise ces informations pour formuler ta réponse finale à l'utilisateur de manière naturelle.`;
+Limites et transparence
+- Si un sujet est très obscur ou peu documenté, indique que tu peux te tromper.
+- Si tu dois évoquer une source sans accès direct, précise que c'est à vérifier.`;
 
 /** Regex to detect SEARCH_WEB: [query] in LLM output */
 const SEARCH_WEB_REGEX = /SEARCH_WEB:\s*\[?(.+?)\]?\s*$/;
@@ -237,12 +245,12 @@ function logOllamaMetrics(
 
   console.log(
     `[LLM:${label}] model=${settings.selectedModel} done=${doneChunk?.done_reason ?? 'unknown'} ` +
-      `prompt=${promptTokens}/${settings.numCtx} (${ctxPct.toFixed(1)}%) gen=${generatedTokens} ` +
-      `combined=${combinedTokens}/${settings.numCtx} (${combinedPct.toFixed(1)}%) combined_left=${combinedLeft} ` +
-      `tps=${tokPerSec.toFixed(2)} ttft=${formatMs(firstTokenMs)} prompt_t=${formatMs(promptMs)} ` +
-      `eval_t=${formatMs(evalMs)} load_t=${formatMs(loadMs)} total_t=${formatMs(totalMs)} ` +
-      `ctx_near_limit=${ctxNearLimit} gen_limit_hit=${hitGenerationLimit} ` +
-      `ctx_overflow_suspected=${contextOverflowSuspected}`
+    `prompt=${promptTokens}/${settings.numCtx} (${ctxPct.toFixed(1)}%) gen=${generatedTokens} ` +
+    `combined=${combinedTokens}/${settings.numCtx} (${combinedPct.toFixed(1)}%) combined_left=${combinedLeft} ` +
+    `tps=${tokPerSec.toFixed(2)} ttft=${formatMs(firstTokenMs)} prompt_t=${formatMs(promptMs)} ` +
+    `eval_t=${formatMs(evalMs)} load_t=${formatMs(loadMs)} total_t=${formatMs(totalMs)} ` +
+    `ctx_near_limit=${ctxNearLimit} gen_limit_hit=${hitGenerationLimit} ` +
+    `ctx_overflow_suspected=${contextOverflowSuspected}`
   );
 }
 
@@ -266,8 +274,8 @@ function logSessionContext(
 
   console.log(
     `[SESSION:${requestId}] turn=${sessionTurnIndex} ctx_base=${stream1PromptTokens}/${settings.numCtx} ` +
-      `(${ctxPct.toFixed(1)}%) base_left=${remaining} base_delta=${delta >= 0 ? `+${delta}` : `${delta}`} ` +
-      `combined=${combined}/${settings.numCtx} (${combinedPct.toFixed(1)}%) combined_left=${combinedLeft} trimmed=${trimmed}`
+    `(${ctxPct.toFixed(1)}%) base_left=${remaining} base_delta=${delta >= 0 ? `+${delta}` : `${delta}`} ` +
+    `combined=${combined}/${settings.numCtx} (${combinedPct.toFixed(1)}%) combined_left=${combinedLeft} trimmed=${trimmed}`
   );
 
   lastStream1PromptTokens = stream1PromptTokens;
@@ -302,13 +310,13 @@ function formatMessageForApi(msg: Message) {
 }
 
 /**
- * Stream an LLM response via native Ollama API and update the assistant message in real-time.
- * Uses POST /api/chat with newline-delimited JSON streaming.
+ * Stream an LLM response via Rust backend (invoke + events).
+ * Uses stream_chat command which calls native Ollama API.
  * Returns the fully accumulated content string when done.
  */
 async function streamLlmResponse(
   settings: ChatState['settings'],
-  apiMessages: Array<{ role: string; content: unknown }>,
+  apiMessages: Array<{ role: string; content: unknown; images?: string[] }>,
   assistantMessageId: string,
   set: (fn: (state: ChatState) => Partial<ChatState>) => void,
   telemetryLabel: string,
@@ -316,113 +324,86 @@ async function streamLlmResponse(
   signal?: AbortSignal
 ): Promise<StreamLlmResult> {
   const streamStart = Date.now();
-  const response = await fetch(`${settings.ollamaUrl}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: settings.selectedModel,
-      messages: apiMessages,
-      stream: true,
-      options: {
-        temperature: settings.temperature,
-        num_ctx: settings.numCtx,
-        num_predict: settings.numPredict,
-      },
-      keep_alive: settings.keepAlive,
-      ...(stop ? { stop } : {}),
-    }),
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error('No response body');
-  }
-
-  const decoder = new TextDecoder();
+  const sessionId = nanoid();
   let accumulatedContent = '';
-  let buffer = '';
-  let streamFinished = false; // Flag for clean exit after parsed.done
   let firstTokenAt: number | null = null;
   let doneChunk: OllamaDoneChunk | null = null;
+  let unlistenToken: UnlistenFn | null = null;
+  let unlistenDone: UnlistenFn | null = null;
 
-  while (true) {
-    // Check for abort signal or stream finished before reading
-    if (signal?.aborted || streamFinished) {
-      // Don't call reader.cancel() - resource already freed by abort
-      break;
-    }
+  return new Promise<StreamLlmResult>(async (resolve, reject) => {
+    // Handle abort signal
+    const abortHandler = () => {
+      unlistenToken?.();
+      unlistenDone?.();
+      resolve({ content: accumulatedContent, doneChunk: null });
+    };
+    signal?.addEventListener('abort', abortHandler);
 
     try {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // Process complete JSON lines (newline-delimited)
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        try {
-          const parsed = JSON.parse(line);
-
-          // Native Ollama format: { message: { content: "token" }, done: false }
-          const delta = parsed.message?.content;
-
-          if (delta) {
-            accumulatedContent += delta;
-            if (firstTokenAt === null) {
-              firstTokenAt = Date.now();
-            }
-
-            // Update the assistant message with accumulated content
-            set((state) => ({
-              messages: state.messages.map((m) =>
-                m.id === assistantMessageId
-                  ? { ...m, content: accumulatedContent }
-                  : m
-              ),
-            }));
-          }
-
-          // Check if stream is done
-          if (parsed.done === true) {
-            doneChunk = parsed as OllamaDoneChunk;
-            streamFinished = true; // Mark as finished to exit while loop
-            break; // Exit for loop
-          }
-        } catch {
-          // Ignore parse errors for incomplete chunks
+      // Listen for tokens
+      unlistenToken = await listen<string>(`llm-token-${sessionId}`, (event) => {
+        const token = event.payload;
+        accumulatedContent += token;
+        if (firstTokenAt === null) {
+          firstTokenAt = Date.now();
         }
-      }
-    } catch (readError) {
-      // If error is related to cancellation, exit silently
-      const errStr = String(readError).toLowerCase();
-      if (
-        errStr.includes('resource id') ||
-        errStr.includes('cancelled') ||
-        errStr.includes('canceled') ||
-        errStr.includes('aborted')
-      ) {
-        break;
-      }
-      // Otherwise, rethrow
-      throw readError;
+
+        // Update the assistant message with accumulated content
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            m.id === assistantMessageId
+              ? { ...m, content: accumulatedContent }
+              : m
+          ),
+        }));
+      });
+
+      // Listen for done
+      unlistenDone = await listen<{
+        prompt_eval_count: number | null;
+        eval_count: number | null;
+        eval_duration: number | null;
+      }>(`llm-done-${sessionId}`, (event) => {
+        const payload = event.payload;
+        doneChunk = {
+          done: true,
+          prompt_eval_count: payload.prompt_eval_count ?? undefined,
+          eval_count: payload.eval_count ?? undefined,
+          eval_duration: payload.eval_duration ?? undefined,
+        };
+
+        // Cleanup listeners
+        unlistenToken?.();
+        unlistenDone?.();
+        signal?.removeEventListener('abort', abortHandler);
+
+        const wallMs = Date.now() - streamStart;
+        const firstTokenMs = firstTokenAt ? firstTokenAt - streamStart : null;
+        logOllamaMetrics(telemetryLabel, settings, doneChunk, wallMs, firstTokenMs);
+
+        resolve({ content: accumulatedContent, doneChunk });
+      });
+
+      // Start the stream via Rust backend
+      await invoke('stream_chat', {
+        sessionId,
+        model: settings.selectedModel,
+        messages: apiMessages,
+        temperature: settings.temperature,
+        numCtx: settings.numCtx,
+        numPredict: settings.numPredict,
+        keepAlive: settings.keepAlive,
+        stop: stop || null,
+      });
+    } catch (error) {
+      // Cleanup listeners on error
+      unlistenToken?.();
+      unlistenDone?.();
+      signal?.removeEventListener('abort', abortHandler);
+      reject(error);
     }
-  }
-
-  const wallMs = Date.now() - streamStart;
-  const firstTokenMs = firstTokenAt ? firstTokenAt - streamStart : null;
-  logOllamaMetrics(telemetryLabel, settings, doneChunk, wallMs, firstTokenMs);
-
-  return { content: accumulatedContent, doneChunk };
+  });
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -778,9 +759,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const withRagLeft = Math.max(0, settings.numCtx - withRagCtx);
           console.log(
             `[SESSION:${requestId}] ctx_with_rag=${withRagCtx}/${settings.numCtx} (${withRagPct.toFixed(1)}%) ` +
-              `with_rag_left=${withRagLeft} combined_with_rag=${withRagCombined}/${settings.numCtx} ` +
-              `(${withRagCombinedPct.toFixed(1)}%) combined_with_rag_left=${withRagCombinedLeft} ` +
-              `rag_overhead=${ragOverhead >= 0 ? `+${ragOverhead}` : `${ragOverhead}`} base_ctx=${baseCtx}/${settings.numCtx}`
+            `with_rag_left=${withRagLeft} combined_with_rag=${withRagCombined}/${settings.numCtx} ` +
+            `(${withRagCombinedPct.toFixed(1)}%) combined_with_rag_left=${withRagCombinedLeft} ` +
+            `rag_overhead=${ragOverhead >= 0 ? `+${ragOverhead}` : `${ragOverhead}`} base_ctx=${baseCtx}/${settings.numCtx}`
           );
         }
 
@@ -868,11 +849,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: state.messages.map((m) =>
           m.id === assistantMessage.id
             ? {
-                ...m,
-                content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
-                isStreaming: false,
-                isSearching: false,
-              }
+              ...m,
+              content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
+              isStreaming: false,
+              isSearching: false,
+            }
             : m
         ),
       }));
@@ -888,6 +869,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   generateImage: async (prompt: string) => {
     const { settings, messages } = get();
+
+    // Get conversation store for persistence
+    const convStore = useConversationStore.getState();
+    const isFirstMessage = messages.length === 0;
+    let conversationId = convStore.currentConversationId;
+
+    // Create new conversation if this is the first message
+    if (isFirstMessage && !conversationId) {
+      try {
+        conversationId = await convStore.createConversation();
+      } catch (e) {
+        console.warn('Failed to create conversation:', e);
+      }
+    }
 
     // Create user message with original prompt
     const userMessage: Message = {
@@ -914,6 +909,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [...messages, userMessage, assistantMessage],
     });
 
+    // Save user message to database immediately
+    if (conversationId) {
+      convStore.saveMessage(userMessage, conversationId).catch((e) => {
+        console.warn('Failed to save user message:', e);
+      });
+    }
+
     const updateAssistant = (updates: Partial<Message>) => {
       set((state) => ({
         messages: state.messages.map((m) =>
@@ -924,34 +926,76 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       // --- Phase 1: Refine prompt via LLM (LLM is still loaded) ---
-      const refineMessages = [
-        { role: 'system', content: IMAGE_REFINE_SYSTEM_PROMPT },
-        { role: 'user', content: prompt },
-      ];
+      // Build conversation context for the LLM to understand references like "similar image"
+      let contextPrompt = prompt;
+      if (messages.length > 0) {
+        // Get recent conversation context (last 6 messages max to avoid token overflow)
+        const recentMessages = messages.slice(-6);
+        const contextParts: string[] = [];
 
-      const response = await fetch(`${settings.ollamaUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: settings.selectedModel,
-          messages: refineMessages,
-          stream: false,
-          options: {
-            temperature: settings.temperature,
-            num_predict: 512,
-          },
-          keep_alive: settings.keepAlive,
-        }),
-      });
+        for (const msg of recentMessages) {
+          if (msg.role === 'user') {
+            let userPart = `User: ${msg.content}`;
+            // Note if user sent images
+            if (msg.images && msg.images.length > 0) {
+              userPart += ` [User uploaded ${msg.images.length} image(s)]`;
+            }
+            contextParts.push(userPart);
+          } else if (msg.role === 'assistant') {
+            // Include assistant's response, noting any generated images
+            let assistantPart = `Assistant: ${msg.content.substring(0, 500)}`;
+            if (msg.imageGen?.status === 'done' && msg.imageGen.refinedPrompt) {
+              assistantPart += ` [Generated image with prompt: "${msg.imageGen.refinedPrompt}"]`;
+            }
+            contextParts.push(assistantPart);
+          }
+        }
 
-      if (!response.ok) {
-        throw new Error(`LLM refinement failed: ${response.status}`);
+        if (contextParts.length > 0) {
+          contextPrompt = `CONVERSATION CONTEXT:\n${contextParts.join('\n')}\n\nCURRENT REQUEST: ${prompt}`;
+        }
       }
 
-      const data = await response.json();
-      // Native Ollama format: { message: { content: "..." } }
-      const refinedPrompt: string =
-        data.message?.content?.trim() || prompt;
+      const refineMessages = [
+        { role: 'system', content: IMAGE_REFINE_SYSTEM_PROMPT },
+        { role: 'user', content: contextPrompt },
+      ];
+
+      // --- Phase 1: Refine prompt via backend (avoid fetch in production) ---
+      const refineSessionId = nanoid();
+
+      const refinedPrompt: string = await new Promise<string>(async (resolve, reject) => {
+        let content = '';
+        let unlistenToken: UnlistenFn | null = null;
+        let unlistenDone: UnlistenFn | null = null;
+
+        try {
+          unlistenToken = await listen<string>(`llm-token-${refineSessionId}`, (event) => {
+            content += event.payload;
+          });
+
+          unlistenDone = await listen<unknown>(`llm-done-${refineSessionId}`, () => {
+            unlistenToken?.();
+            unlistenDone?.();
+            resolve(content.trim() || prompt);
+          });
+
+          await invoke('stream_chat', {
+            sessionId: refineSessionId,
+            model: settings.selectedModel,
+            messages: refineMessages,
+            temperature: settings.temperature,
+            numCtx: settings.numCtx,
+            numPredict: 512,
+            keepAlive: settings.keepAlive,
+            stop: null,
+          });
+        } catch (error) {
+          unlistenToken?.();
+          unlistenDone?.();
+          reject(error);
+        }
+      });
 
       // Update message: show refined prompt, transition to generating state
       const genStartTime = Date.now();
@@ -970,15 +1014,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
         model: settings.selectedModel,
       });
 
-      // --- Phase 3: Done -- display image ---
+      // --- Phase 3: Done -- display image and persist ---
+      const finalImageGen = {
+        status: 'done' as const,
+        refinedPrompt,
+        generatedImage: base64Image,
+        startTime: genStartTime,
+      };
+
       updateAssistant({
-        imageGen: {
-          status: 'done',
-          refinedPrompt,
-          generatedImage: base64Image,
-          startTime: genStartTime,
-        },
+        imageGen: finalImageGen,
       });
+
+      // Save assistant message with generated image to database
+      if (conversationId) {
+        const msgToSave: Message = {
+          ...assistantMessage,
+          content: refinedPrompt,
+          imageGen: finalImageGen,
+        };
+        convStore.saveMessage(msgToSave, conversationId).catch((e) => {
+          console.warn('Failed to save assistant message:', e);
+        });
+
+        // Generate title after first exchange
+        if (isFirstMessage) {
+          convStore.generateTitle(
+            conversationId,
+            prompt,
+            `[Image générée: ${refinedPrompt.substring(0, 100)}]`
+          );
+        }
+      }
     } catch (error) {
       console.error('Image generation failed:', error);
       const errMsg =

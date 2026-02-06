@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { nanoid } from 'nanoid';
 import { useChatStore } from '@/stores/chatStore';
 import { useConversationStore } from '@/stores/conversationStore';
+import { useSdForgeStore } from '@/stores/sdForgeStore';
 import { MistralLogo } from '@/components/icons';
 import { Sidebar } from '@/components/layout';
 import { Message } from './Message';
@@ -35,10 +36,15 @@ export function ChatContainer() {
   const currentConversation = conversations.find((c) => c.id === currentConversationId);
   const currentTitle = currentConversation?.title || 'Le Chat Local';
 
-  // --- Initialize database and load settings on mount ---
+  // --- Initialize database, settings, and SD Forge listener on mount ---
   useEffect(() => {
     loadSettings();
     initDatabase();
+    useSdForgeStore.getState().initListener();
+
+    return () => {
+      useSdForgeStore.getState().cleanup();
+    };
   }, [loadSettings, initDatabase]);
 
   // --- Drag & Drop State ---

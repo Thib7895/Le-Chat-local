@@ -9,10 +9,10 @@ use tokio_util::sync::CancellationToken;
 use commands::{
     check_ollama_connection, create_conversation, db_init, delete_conversation,
     ensure_ollama_running, generate_conversation_title, generate_image,
-    get_conversation_messages, get_settings, list_conversations, list_ollama_models,
-    preload_model, save_message, save_settings, send_message, stt_transcribe,
-    synthesize_speech, unload_model, update_conversation_title, update_message_content,
-    DatabaseState, Settings, SttState, TtsState,
+    get_conversation_messages, get_settings, is_sd_forge_ready, list_conversations,
+    list_ollama_models, preload_model, save_message, save_settings, send_message,
+    stream_chat, stt_transcribe, synthesize_speech, unload_model, update_conversation_title,
+    update_message_content, DatabaseState, SdForgeState, Settings, SttState, TtsState,
 };
 use web::{cancel_search, search_web, search_web_v2, start_searxng, stop_searxng};
 
@@ -66,11 +66,11 @@ impl Default for SearchCancellationState {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_http::init())
         .manage(TtsState::default())
         .manage(SttState::default())
         .manage(SearchCancellationState::new())
         .manage(DatabaseState::default())
+        .manage(SdForgeState::default())
         .setup(|app| {
             // Logging is handled by env_logger in main.rs (with tao/wry filters)
 
@@ -89,10 +89,11 @@ pub fn run() {
             });
 
             // Ensure Ollama is running, then pre-load model from settings
+            // Then start SD Forge AFTER Ollama model is loaded (to avoid VRAM conflicts)
             let ollama_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 // Load settings to get the selected model
-                let settings = get_settings(ollama_handle)
+                let settings = get_settings(ollama_handle.clone())
                     .await
                     .unwrap_or_else(|_| Settings::default());
 
@@ -102,7 +103,15 @@ pub fn run() {
                         // Pre-load the model from settings into memory
                         let model = settings.selected_model;
                         match preload_model(model.clone()).await {
-                            Ok(()) => eprintln!("Ollama: Model ready"),
+                            Ok(()) => {
+                                eprintln!("Ollama: Model ready");
+
+                                // Start SD Forge AFTER Ollama model is loaded
+                                let sd_state = ollama_handle.state::<SdForgeState>();
+                                if let Err(e) = sd_state.start_and_wait(&ollama_handle).await {
+                                    eprintln!("SD Forge: {}", e);
+                                }
+                            }
                             Err(e) => eprintln!("Ollama: Failed to preload model: {}", e),
                         }
                     }
@@ -123,6 +132,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             send_message,
+            stream_chat,
             check_ollama_connection,
             ensure_ollama_running,
             list_ollama_models,
@@ -145,7 +155,8 @@ pub fn run() {
             update_message_content,
             update_conversation_title,
             delete_conversation,
-            generate_conversation_title
+            generate_conversation_title,
+            is_sd_forge_ready
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -155,6 +166,18 @@ pub fn run() {
             eprintln!("App: Shutting down...");
             let handle = app_handle.clone();
             tauri::async_runtime::block_on(async {
+                // Stop TTS Python process
+                let tts_state = handle.state::<TtsState>();
+                tts_state.stop().await;
+
+                // Stop STT Python process
+                let stt_state = handle.state::<SttState>();
+                stt_state.stop().await;
+
+                // Stop SD Forge process
+                let sd_state = handle.state::<SdForgeState>();
+                sd_state.stop();
+
                 // Unload Ollama model from memory
                 let model = get_settings(handle)
                     .await
