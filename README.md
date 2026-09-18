@@ -14,9 +14,9 @@ Le Chat Local is a desktop application that orchestrates several AI services run
 
 ## Current status
 
-The current public version focuses on local inference, web search, multimodal interaction, and tool orchestration through Rust functions in the Tauri backend.
+This project is under active development and has primarily been developed and tested on my own Windows environment. The public repository is intended as a technical prototype rather than a production-ready application, and installation on a fresh machine has not yet been fully validated.
 
-A LangGraph-based orchestration layer is currently under development and is not yet part of the public GitHub version.
+The current public version focuses on local inference, web search, multimodal interaction and service orchestration through the Rust/Tauri backend. A LangGraph-based orchestration layer is currently under development and is not yet part of the public version.
 
 ---
 
