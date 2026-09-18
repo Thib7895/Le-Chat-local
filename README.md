@@ -1,86 +1,92 @@
 # Le Chat Local
 
-> Assistant IA 100 % local inspiré du Chat de Mistral AI : chat, voix, génération d'images et recherche web. Aucune donnée ne quitte la machine.
+> Local-first AI desktop assistant inspired by Mistral AI's Le Chat, featuring chat, voice, image generation, vision and web search. AI inference runs locally on your machine.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Démonstration de Le Chat Local : recherche web sourcée, génération d'image et vision" width="720">
+  <img src="assets/demo.gif" alt="Le Chat Local demo: sourced web search, image generation and vision" width="720">
 </p>
 
 <p align="center">
-  <em>Recherche web sourcée, génération d'image contextuelle et vision, le tout en local.</em>
+  <em>Sourced web search, context-aware image generation and vision, powered by locally running AI models.</em>
 </p>
 
-Le Chat Local est une application de bureau qui orchestre plusieurs services d'IA tournant en local sur votre machine : un LLM via Ollama, la synthèse et la reconnaissance vocale via des sidecars Python, la génération d'images via Stable Diffusion Forge, et la recherche web via une instance SearXNG auto-hébergée. L'application démarre et arrête elle-même ces services.
+Le Chat Local is a desktop application that orchestrates several AI services running locally on your machine: an LLM through Ollama, text-to-speech and speech-to-text through Python sidecars, image generation through Stable Diffusion Forge, and web search through a self-hosted SearXNG instance. The application automatically starts and stops these services as needed.
+
+## Current status
+
+The current public version focuses on local inference, web search, multimodal interaction, and tool orchestration through Rust functions in the Tauri backend.
+
+A LangGraph-based orchestration layer is currently under development and is not yet part of the public GitHub version.
 
 ---
 
-## Fonctionnalités
+## Features
 
-- **Chat LLM en streaming** — API native Ollama (`/api/chat`), avec paramètres réglables : `temperature`, `num_ctx`, `num_predict`, `keep_alive`.
-- **Persistance des conversations** — base SQLite, sidebar de navigation, titrage automatique de la conversation après le premier échange.
-- **Vision** — envoi d'images au modèle (encodées en base64 dans le champ `images` de la requête Ollama).
-- **Synthèse vocale (TTS)** — Kokoro ONNX, avec détection automatique de la langue (français / anglais) via `whatlang`.
-- **Reconnaissance vocale (STT)** — faster-whisper `large-v3-turbo`, accélération CUDA et filtrage VAD.
-- **Génération d'images** — Stable Diffusion Forge, avec *VRAM swap* orchestré : décharge le LLM → génère l'image → décharge le checkpoint SD → recharge le LLM. Le prompt est d'abord raffiné par le LLM en tenant compte du contexte de la conversation (ce qui permet des demandes du type « refais une image similaire mais la nuit »).
-- **Recherche web RAG** — pipeline *Retrieve-Read-Rank* maison (`src-tauri/src/web/`) branché sur SearXNG : expansion en plusieurs requêtes, extraction du contenu principal des pages, scoring lexical + sémantique, puis génération d'une réponse sourcée.
-- **Démarrage automatique des services** — Ollama, Docker Desktop et SD Forge sont lancés par l'application s'ils ne tournent pas déjà, et arrêtés proprement à la fermeture.
+- **Streaming LLM chat** - native Ollama API (`/api/chat`), with configurable parameters including `temperature`, `num_ctx`, `num_predict` and `keep_alive`.
+- **Conversation persistence** - SQLite database, conversation sidebar and automatic title generation after the first exchange.
+- **Vision** - images can be sent to the model, encoded as base64 in the `images` field of the Ollama request.
+- **Text-to-Speech (TTS)** - Kokoro ONNX, with automatic French / English language detection using `whatlang`.
+- **Speech-to-Text (STT)** - faster-whisper `large-v3-turbo`, with CUDA acceleration and VAD filtering.
+- **Image generation** - Stable Diffusion Forge with orchestrated *VRAM swapping*: unload the LLM, generate the image, unload the Stable Diffusion checkpoint, then reload the LLM. The image prompt is first refined by the LLM using the conversation context, enabling requests such as "generate a similar image, but at night".
+- **Web-search RAG** - custom *Retrieve-Read-Rank* pipeline (`src-tauri/src/web/`) connected to SearXNG: multi-query expansion, main-content extraction, lexical and semantic scoring, followed by generation of a sourced answer.
+- **Automatic service lifecycle management** - Ollama, Docker Desktop and SD Forge are started automatically if they are not already running, and shut down cleanly when the application closes.
 
 ---
 
 ## Architecture
 
-```
+```text
 Le Chat/
-├── src/                          # Frontend Next.js (export statique)
-│   ├── app/                      # App router
+├── src/                          # Next.js frontend (static export)
+│   ├── app/                      # App Router
 │   ├── components/
 │   │   ├── chat/                 # ChatContainer, InputBar, Message
 │   │   ├── layout/               # Sidebar
 │   │   └── icons/
-│   ├── stores/                   # Zustand : chatStore, conversationStore, sdForgeStore
+│   ├── stores/                   # Zustand: chatStore, conversationStore, sdForgeStore
 │   ├── hooks/
-│   └── lib/                      # types, constantes
+│   └── lib/                      # Types, constants
 │
-├── src-tauri/                    # Backend Rust
+├── src-tauri/                    # Rust backend
 │   ├── src/
-│   │   ├── lib.rs                # Setup, orchestration au démarrage, cleanup à la fermeture
+│   │   ├── lib.rs                # Setup, startup orchestration, shutdown cleanup
 │   │   ├── commands/
-│   │   │   ├── llm.rs            # stream_chat, preload/unload model, ensure_ollama_running
-│   │   │   ├── image_gen.rs      # Pipeline VRAM swap + appel SD Forge
-│   │   │   ├── sd_forge.rs       # Cycle de vie du process SD Forge
-│   │   │   ├── tts.rs            # Sidecar Python TTS (JSON-RPC sur stdin/stdout)
-│   │   │   ├── stt.rs            # Sidecar Python STT (JSON-RPC sur stdin/stdout)
-│   │   │   ├── database.rs       # SQLite : conversations et messages
+│   │   │   ├── llm.rs            # stream_chat, model preload/unload, ensure_ollama_running
+│   │   │   ├── image_gen.rs      # VRAM swap pipeline + SD Forge call
+│   │   │   ├── sd_forge.rs       # SD Forge process lifecycle
+│   │   │   ├── tts.rs            # Python TTS sidecar (JSON-RPC over stdin/stdout)
+│   │   │   ├── stt.rs            # Python STT sidecar (JSON-RPC over stdin/stdout)
+│   │   │   ├── database.rs       # SQLite: conversations and messages
 │   │   │   └── settings.rs       # settings.json
-│   │   └── web/                  # Pipeline de recherche RAG
-│   │       ├── docker.rs         # Cycle de vie Docker + conteneur SearXNG
-│   │       ├── providers.rs      # Client SearXNG
-│   │       ├── fetch.rs          # Récupération des pages
-│   │       ├── evidence.rs       # Extraction du contenu
-│   │       └── rank.rs           # Scoring des résultats
-│   ├── capabilities/default.json # Permissions Tauri
+│   │   └── web/                  # RAG web-search pipeline
+│   │       ├── docker.rs         # Docker + SearXNG container lifecycle
+│   │       ├── providers.rs      # SearXNG client
+│   │       ├── fetch.rs          # Web page fetching
+│   │       ├── evidence.rs       # Content extraction
+│   │       └── rank.rs           # Result scoring
+│   ├── capabilities/default.json # Tauri permissions
 │   └── tauri.conf.json
 │
 ├── python-sidecar/src/
-│   ├── sidecar_standalone.py     # Sidecar TTS (Kokoro)
-│   ├── stt_sidecar.py            # Sidecar STT (faster-whisper)
+│   ├── sidecar_standalone.py     # TTS sidecar (Kokoro)
+│   ├── stt_sidecar.py            # STT sidecar (faster-whisper)
 │   └── tts_engine.py
 │
 ├── services/searxng/             # docker-compose.yml + settings.yml
-└── assets/models/                # Modèles TTS (non versionnés)
+└── assets/models/                # TTS models (not version-controlled)
 ```
 
-### Point d'architecture important : aucun `fetch` côté WebView
+### Important architecture decision: no `fetch` from the WebView
 
-Tous les appels HTTP passent par le backend Rust via `invoke` et le système d'événements Tauri — **jamais** par `fetch` depuis le WebView. En build de production, le WebView bloque les requêtes vers `localhost`, ce qui provoquait des erreurs `Failed to fetch`.
+All HTTP requests go through the Rust backend using Tauri's `invoke` and event system, never through `fetch` directly from the WebView. In production builds, the WebView blocks requests to `localhost`, which previously resulted in `Failed to fetch` errors.
 
-Le streaming du LLM en est l'illustration : la commande Rust `stream_chat` ([llm.rs](src-tauri/src/commands/llm.rs)) consomme le flux Ollama et émet des événements `llm-token-{sessionId}` / `llm-done-{sessionId}`, que le frontend écoute dans `streamLlmResponse` ([chatStore.ts](src/stores/chatStore.ts)).
+LLM streaming illustrates this architecture: the Rust `stream_chat` command ([llm.rs](src-tauri/src/commands/llm.rs)) consumes the Ollama stream and emits `llm-token-{sessionId}` / `llm-done-{sessionId}` events, which are handled by `streamLlmResponse` in the frontend ([chatStore.ts](src/stores/chatStore.ts)).
 
-Toute nouvelle intégration HTTP doit suivre ce modèle.
+Any new HTTP integration should follow the same pattern.
 
-### Ports utilisés
+### Ports
 
-| Service | Port | Défini dans |
+| Service | Port | Defined in |
 |---|---|---|
 | Ollama | `11434` | `src-tauri/src/commands/llm.rs` |
 | SD Forge | `7860` | `src-tauri/src/commands/sd_forge.rs`, `image_gen.rs` |
@@ -88,59 +94,59 @@ Toute nouvelle intégration HTTP doit suivre ce modèle.
 
 ---
 
-## Prérequis
+## Prerequisites
 
-### Système
+### System
 
-- **Windows 10 / 11** — la gestion des processus est spécifique à Windows (`CREATE_NO_WINDOW`, `taskkill /F /T`). L'application ne fonctionnera pas telle quelle sur macOS ou Linux.
-- **GPU NVIDIA avec CUDA** — fortement recommandé : faster-whisper et SD Forge sont configurés pour l'accélération CUDA. Prévoir suffisamment de VRAM pour le LLM (le *VRAM swap* permet de partager la mémoire entre le LLM et Stable Diffusion, mais pas de s'en passer).
+- **Windows 10 / 11** - process management is Windows-specific (`CREATE_NO_WINDOW`, `taskkill /F /T`). The application will not work as-is on macOS or Linux.
+- **NVIDIA GPU with CUDA** - strongly recommended. faster-whisper and SD Forge are configured to use CUDA acceleration. Sufficient VRAM is required for the LLM. The *VRAM swap* mechanism allows the LLM and Stable Diffusion to share GPU memory, but does not eliminate VRAM requirements.
 
-### Logiciels
+### Software
 
-| Logiciel | Usage |
+| Software | Purpose |
 |---|---|
-| [Node.js](https://nodejs.org) 20+ | Frontend Next.js |
-| [Rust](https://rustup.rs) (stable) | Backend Tauri |
-| [Ollama](https://ollama.com) | Inférence LLM |
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Conteneur SearXNG |
-| Python 3.10+ | Sidecars TTS et STT |
-| [SD WebUI Forge Classic](https://github.com/Haoming02/sd-webui-forge-classic) | Génération d'images |
+| [Node.js](https://nodejs.org) 20+ | Next.js frontend |
+| [Rust](https://rustup.rs) (stable) | Tauri backend |
+| [Ollama](https://ollama.com) | LLM inference |
+| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | SearXNG container |
+| Python 3.10+ | TTS and STT sidecars |
+| [SD WebUI Forge Classic](https://github.com/Haoming02/sd-webui-forge-classic) | Image generation |
 
-### Environnements Python
+### Python environments
 
-Deux environnements **distincts** sont nécessaires (les dépendances CUDA de faster-whisper entrent en conflit avec onnxruntime) :
+Two **separate environments** are required because faster-whisper CUDA dependencies conflict with `onnxruntime`:
 
-1. **Environnement principal (TTS)** — dépendances dans `python-sidecar/requirements.txt` : `kokoro-onnx`, `onnxruntime`, `numpy`, `soundfile`.
-2. **Environnement `sst-env` (STT)** — `faster-whisper` et CTranslate2 avec support CUDA.
+1. **Main environment (TTS)** - dependencies listed in `python-sidecar/requirements.txt`: `kokoro-onnx`, `onnxruntime`, `numpy`, `soundfile`.
+2. **`sst-env` environment (STT)** - `faster-whisper` and CTranslate2 with CUDA support.
 
-### Modèles à télécharger
+### Models to download
 
-| Modèle | Emplacement attendu |
+| Model | Expected location |
 |---|---|
 | `kokoro-v1.0.onnx` | `assets/models/` |
 | `voices-v1.0.bin` | `assets/models/` |
-| Modèle LLM Ollama | géré par Ollama (`ollama pull`) |
-| Checkpoint Stable Diffusion `.safetensors` | dossier `models/Stable-diffusion/` de SD Forge |
+| Ollama LLM | managed by Ollama (`ollama pull`) |
+| Stable Diffusion `.safetensors` checkpoint | SD Forge `models/Stable-diffusion/` directory |
 
-> Les fichiers `assets/models/*.onnx` et `*.bin` sont exclus du dépôt via `.gitignore` : il faut les télécharger séparément.
+> The `assets/models/*.onnx` and `*.bin` files are excluded from the repository through `.gitignore` and must be downloaded separately.
 
 ---
 
 ## Installation
 
-**1. Cloner le dépôt et installer les dépendances Node**
+**1. Clone the repository and install Node dependencies**
 
 ```bash
 npm install
 ```
 
-**2. Créer l'environnement Python pour le TTS**
+**2. Create the Python environment for TTS**
 
 ```bash
 pip install -r python-sidecar/requirements.txt
 ```
 
-**3. Créer l'environnement Python `sst-env` pour le STT**
+**3. Create the `sst-env` environment for STT**
 
 ```bash
 conda create -n sst-env python=3.11 -y
@@ -150,68 +156,69 @@ conda create -n sst-env python=3.11 -y
 conda run -n sst-env pip install faster-whisper
 ```
 
-**4. Placer les modèles TTS dans `assets/models/`**
+**4. Place the TTS models in `assets/models/`**
 
-**5. Télécharger un modèle LLM**
+**5. Download an LLM**
 
 ```bash
 ollama pull ministral-3:3b-instruct-2512-q4_K_M
 ```
 
-**6. Lancer en développement**
+**6. Run in development mode**
 
 ```bash
 npm run tauri dev
 ```
 
-**7. Compiler une version distribuable**
+**7. Build a distributable version**
 
 ```bash
 npm run tauri build
 ```
 
-Les installeurs sont générés dans `src-tauri/target/release/bundle/msi/` et `src-tauri/target/release/bundle/nsis/`.
+Installers are generated in `src-tauri/target/release/bundle/msi/` and `src-tauri/target/release/bundle/nsis/`.
 
 ---
 
-## Données générées
+## Generated Data
 
-L'application écrit dans le répertoire de données applicatives Tauri, créé au premier lancement. Sur Windows, il s'agit de `%APPDATA%\com.lechat.local\` (le nom du dossier dérive de l'`identifier` défini dans `src-tauri/tauri.conf.json`).
+The application writes its data to the Tauri application data directory, which is created on first launch. On Windows, this is `%APPDATA%\com.lechat.local\` (the directory name is derived from the `identifier` defined in `src-tauri/tauri.conf.json`).
 
-| Fichier | Contenu |
+| File | Contents |
 |---|---|
-| `conversations.db` | Base SQLite : tables `conversations` et `messages` |
-| `settings.json` | Préférences : URL Ollama, modèle, voix, langue, paramètres LLM |
+| `conversations.db` | SQLite database containing the `conversations` and `messages` tables |
+| `settings.json` | Preferences: Ollama URL, model, voice, language and LLM parameters |
 
-**Schéma de la base :**
+**Database schema:**
 
-- `conversations` — `id`, `title`, `created_at`, `updated_at`
-- `messages` — `id`, `conversation_id`, `role`, `content`, `timestamp`, `images` (JSON), `image_gen` (JSON)
+- `conversations` - `id`, `title`, `created_at`, `updated_at`
+- `messages` - `id`, `conversation_id`, `role`, `content`, `timestamp`, `images` (JSON), `image_gen` (JSON)
 
-Les images envoyées au modèle comme les images générées sont stockées **en base64 directement dans la base**, dans les colonnes JSON `images` et `image_gen`. La base peut donc grossir rapidement avec un usage intensif de la génération d'images.
+Both images sent to the model and generated images are stored **directly as base64 in the database**, inside the `images` and `image_gen` JSON columns. The database can therefore grow quickly when image generation is used extensively.
 
-Aucun cache ni fichier de log n'est écrit sur disque : les logs partent sur `stderr` via `env_logger`, visibles uniquement en mode développement.
+No cache or log files are written to disk. Logs are sent to `stderr` through `env_logger` and are only visible in development mode.
 
-Pour repartir de zéro, il suffit de supprimer le dossier `%APPDATA%\com.lechat.local\`.
+To reset the application completely, simply delete the `%APPDATA%\com.lechat.local\` directory.
 
 ---
 
-### Limitations
+## Limitations
 
-- **Windows uniquement.** Le code de gestion des processus (masquage de console, arbre de processus) est spécifique à Windows.
-- **La fenêtre de Docker Desktop s'affiche** lors du démarrage automatique. Docker Desktop force l'affichage de sa fenêtre au lancement et il n'existe pas de contournement fiable. Pour l'éviter, activez « Start Docker Desktop when you sign in » dans les réglages de Docker : il sera déjà lancé au démarrage de l'application.
-- **Paramètres de génération d'images figés** — 512×512, 20 steps, sampler `DPM++ 2M Karras`, `cfg_scale` 5, définis en dur dans `src-tauri/src/commands/image_gen.rs` (lignes 43-50). Ils ne sont pas exposés dans l'interface.
+- **Windows only.** Process-management code, including console hiding and process-tree termination, is Windows-specific.
+- **The Docker Desktop window appears during automatic startup.** Docker Desktop forces its window to open when launched, and there is no reliable workaround. To avoid this, enable "Start Docker Desktop when you sign in" in Docker settings so that it is already running when the application starts.
+- **Image-generation parameters are currently hard-coded** - 512x512, 20 steps, `DPM++ 2M Karras` sampler and `cfg_scale` 5, defined in `src-tauri/src/commands/image_gen.rs` (lines 43-50). They are not exposed in the user interface.
+
 ---
 
-## Développement
+## Development
 
-| Commande | Description |
+| Command | Description |
 |---|---|
-| `npm run dev` | Frontend Next.js seul (port 3000) |
-| `npm run build` | Export statique du frontend vers `out/` |
-| `npm run tauri dev` | Application complète en mode développement |
-| `npm run tauri build` | Build de production + installeurs MSI et NSIS |
+| `npm run dev` | Next.js frontend only (port 3000) |
+| `npm run build` | Static frontend export to `out/` |
+| `npm run tauri dev` | Full application in development mode |
+| `npm run tauri build` | Production build + MSI and NSIS installers |
 
-**Stack :** Next.js 16 (export statique), React 19, Tailwind CSS 4, Zustand, Framer Motion, react-markdown côté frontend. Tauri 2, rusqlite, reqwest, scraper, whatlang, tokio côté backend.
+**Stack:** Next.js 16 (static export), React 19, Tailwind CSS 4, Zustand, Framer Motion and react-markdown on the frontend. Tauri 2, rusqlite, reqwest, scraper, whatlang and tokio on the backend.
 
 ---
